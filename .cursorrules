@@ -1,0 +1,311 @@
+# WebXR Vanilla Plane Detection - Development Rules
+
+## 🎯 **Project Status: Production-Ready Advanced WebXR System**
+
+This is a **state-of-the-art WebXR application** with advanced cursor system, hit-testing, plane visualization, and cube repositioning. The codebase is production-ready and follows WebXR specifications.
+
+## 🏗️ **Current Architecture (DO NOT DUPLICATE)**
+
+The project has evolved into a sophisticated system with:
+- **HitTestManager**: WebXR hit-test API implementation
+- **CursorManager**: Real-time visual feedback system
+- **PlaneVisualizer**: Dynamic surface highlighting
+- **Advanced State Management**: Multi-state placement with repositioning
+- **Complete Resource Management**: Memory leak prevention
+
+## 🛠️ **Development Guidelines**
+
+### **Code Style & Standards**
+```javascript
+// ✅ Follow established patterns
+class InteractionManager {
+  constructor(scene, sceneGroups = null) {
+    this.scene = scene
+    this.isDisposed = false
+    
+    // Use existing scene groups structure
+    if (sceneGroups?.cursors) {
+      this.targetGroup = sceneGroups.cursors
+    }
+  }
+  
+  dispose() {
+    if (this.isDisposed) return
+    this.isDisposed = true
+    // Complete cleanup
+  }
+}
+```
+
+### **WebXR Implementation Rules**
+
+#### **1. Always Follow WebXR Specifications**
+```javascript
+// ✅ Correct: Use entity types per W3C spec
+const hitTestSource = await session.requestHitTestSource({
+  space: inputSource.targetRaySpace,
+  entityTypes: ['plane', 'point'] // Required by specification
+});
+
+// ❌ Incorrect: Missing entity types
+const hitTestSource = await session.requestHitTestSource({
+  space: inputSource.targetRaySpace
+});
+```
+
+#### **2. State Management Patterns**
+```javascript
+// ✅ Use established placement states
+this.placementState = 'scanning' | 'targeting' | 'preview' | 'placed' | 'repositioning'
+
+// ✅ Always check disposal state
+if (this.isDisposed) return
+
+// ✅ Prevent race conditions
+if (!this.hitTestSetupInProgress) {
+  this.hitTestSetupInProgress = true
+  // async operation
+}
+```
+
+#### **3. Memory Management Requirements**
+```javascript
+// ✅ Always implement disposal pattern
+dispose() {
+  if (this.isDisposed) return
+  this.isDisposed = true
+  
+  // Dispose Three.js resources
+  if (this.material) {
+    this.disposeMaterialTextures(this.material)
+    this.material.dispose()
+  }
+  
+  if (this.geometry) {
+    this.geometry.dispose()
+  }
+  
+  // Clear collections
+  this.maps.clear()
+}
+```
+
+### **Performance Optimization Rules**
+
+#### **1. Efficient Update Patterns**
+```javascript
+// ✅ Only update when necessary
+if (this.activeInputSources.size > 0) {
+  this.updateCursors(hitTestResults, time)
+} else {
+  this.hideAllCursors()
+}
+
+// ✅ Debounce expensive operations
+if (time - this.lastUpdateTime > UPDATE_THRESHOLD) {
+  this.performExpensiveUpdate()
+  this.lastUpdateTime = time
+}
+```
+
+#### **2. Scene Organization**
+```javascript
+// ✅ Use established scene groups
+this.sceneGroups = {
+  cursors: new THREE.Group(),      // Visual cursors
+  planeVisuals: new THREE.Group(), // Surface highlights  
+  content: new THREE.Group()       // Placed objects
+}
+```
+
+### **Error Handling Standards**
+
+#### **1. WebXR Error Patterns**
+```javascript
+// ✅ Comprehensive WebXR error handling
+try {
+  const hitTestResult = frame.getHitTestResults(hitTestSource)
+  // Process results
+} catch (error) {
+  console.warn(`⚠️ [DEBUG] Hit-test failed:`, error.message)
+  // Fallback to plane detection
+  this.fallbackToPlaneDetection(frame)
+}
+```
+
+#### **2. Validation Patterns**
+```javascript
+// ✅ Always validate WebXR data
+if (!pose || !pose.transform || !pose.transform.position) {
+  console.warn('⚠️ [DEBUG] Invalid pose data, skipping update')
+  return
+}
+```
+
+### **Logging & Debug Standards**
+
+#### **1. Consistent Logging Format**
+```javascript
+// ✅ Use emoji prefixes for log categories
+console.log('🎯 [DEBUG] Hit-test event:', data)        // Hit-testing
+console.log('🎨 [DEBUG] Cursor update:', data)         // Cursor system
+console.log('🎭 [DEBUG] Plane highlight:', data)       // Plane visualization
+console.log('📊 [DEBUG] Performance:', data)           // Performance
+console.log('⚡ [DEBUG] Memory event:', data)          // Memory management
+console.log('✅ [DEBUG] Success:', data)               // Success
+console.warn('⚠️ [DEBUG] Warning:', data)              // Warnings
+console.error('❌ [DEBUG] Error:', data)               // Errors
+```
+
+#### **2. Performance Logging Limits**
+```javascript
+// ✅ Limit console spam (5-second intervals)
+if (time - this.lastLogTime > 5000) {
+  console.log(`📊 [DEBUG] Frame stats: ${fps.toFixed(1)} FPS`)
+  this.lastLogTime = time
+}
+```
+
+## 🔧 **Integration Patterns**
+
+### **Adding New Interaction Systems**
+```javascript
+// ✅ Follow established manager pattern
+export class NewInteractionManager {
+  constructor(scene, sceneGroups = null) {
+    this.scene = scene
+    this.isDisposed = false
+    
+    // Integrate with scene groups
+    if (sceneGroups?.targetGroup) {
+      this.parentGroup = sceneGroups.targetGroup
+    } else {
+      this.parentGroup = new THREE.Group()
+      this.scene.add(this.parentGroup)
+    }
+  }
+  
+  // Standard interface methods
+  update(frame, time) { /* implementation */ }
+  dispose() { /* proper cleanup */ }
+  getDebugInfo() { /* debug data */ }
+}
+```
+
+### **Main Application Integration**
+```javascript
+// ✅ Initialize in startAR method
+this.newManager = new NewInteractionManager(this.scene, this.sceneGroups)
+
+// ✅ Update in render loop
+if (this.newManager && this.placementState === 'targeting') {
+  this.newManager.update(frame, time)
+}
+
+// ✅ Dispose in session end
+if (this.newManager) {
+  this.newManager.dispose()
+  this.newManager = null
+}
+```
+
+## 🚫 **Anti-Patterns to Avoid**
+
+### **❌ Memory Leaks**
+```javascript
+// ❌ Never create objects without disposal
+const geometry = new THREE.BoxGeometry() // LEAK!
+
+// ✅ Always plan disposal path
+const geometry = new THREE.BoxGeometry()
+// Store reference for later disposal
+this.geometries.push(geometry)
+```
+
+### **❌ Race Conditions**
+```javascript
+// ❌ Concurrent async operations
+this.setupHitTestSources(sources) // RACE CONDITION!
+this.setupHitTestSources(sources) // RACE CONDITION!
+
+// ✅ Prevent concurrent setup
+if (!this.setupInProgress) {
+  this.setupInProgress = true
+  await this.setupHitTestSources(sources)
+  this.setupInProgress = false
+}
+```
+
+### **❌ Console Spam**
+```javascript
+// ❌ Logging in render loop without throttling
+console.log('Frame update') // 60+ logs per second!
+
+// ✅ Throttled logging
+if (time - this.lastLogTime > 5000) {
+  console.log('Frame update summary')
+  this.lastLogTime = time
+}
+```
+
+## 🧪 **Testing Requirements**
+
+### **WebXR Compliance Testing**
+- ✅ Test on actual Meta Quest 3 hardware
+- ✅ Verify hit-test entity types configuration
+- ✅ Validate memory cleanup with browser dev tools
+- ✅ Test session interruption handling
+- ✅ Verify HTTPS deployment
+
+### **Performance Benchmarks**
+- ✅ Maintain 60fps during all interactions
+- ✅ Memory usage should not increase over time
+- ✅ Hit-test latency < 16ms
+- ✅ Cursor response time < 5ms
+
+### **User Experience Validation**
+- ✅ Cursor appears within 500ms of pointing
+- ✅ Plane highlighting responds immediately
+- ✅ Repositioning workflow is intuitive
+- ✅ Error states provide clear feedback
+
+## 📝 **Code Review Checklist**
+
+### **Before Committing**
+- [ ] All managers implement disposal pattern
+- [ ] Memory leaks checked with Chrome DevTools
+- [ ] WebXR specification compliance verified
+- [ ] Error handling covers all WebXR edge cases
+- [ ] Console logging follows emoji prefix standards
+- [ ] Performance impact measured
+- [ ] Quest 3 hardware testing completed
+
+### **Pull Request Requirements**
+- [ ] Code follows established patterns
+- [ ] No new anti-patterns introduced
+- [ ] Memory management validated
+- [ ] WebXR specification compliance maintained
+- [ ] Comprehensive error handling included
+- [ ] Debug logging properly implemented
+
+## 🎯 **Current Implementation Status**
+
+**✅ COMPLETED SYSTEMS:**
+- Hit-testing with WebXR API compliance
+- Visual cursor system with animations
+- Plane visualization and highlighting
+- Multi-state placement system
+- Cube repositioning via ray-casting
+- Complete memory management
+- Production-ready error handling
+
+**🚀 FUTURE ENHANCEMENTS:**
+- Multiple object placement
+- Gesture-based interactions
+- Spatial audio integration
+- Hand gesture recognition
+- Advanced anchor management
+
+---
+
+**Follow these rules religiously to maintain code quality and WebXR specification compliance** ⚡ 

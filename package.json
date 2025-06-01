@@ -1,0 +1,22 @@
+{
+  "name": "webxr-vanilla-plain-detection",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:https": "vite --host",
+    "build": "vite build",
+    "preview": "vite preview",
+    "preview:https": "vite preview --host --https",
+    "check-updates": "npm outdated",
+    "update-deps": "npm update"
+  },
+  "dependencies": {
+    "three": "^0.160.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-basic-ssl": "^1.1.0",
+    "vite": "^6.3.5"
+  }
+}

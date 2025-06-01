@@ -1,0 +1,248 @@
+/* WebXR Plane Detection - Modern AR Interface */
+
+:root {
+  --primary-color: #00ff88;
+  --secondary-color: #0088ff;
+  --background-dark: rgba(0, 0, 0, 0.8);
+  --background-light: rgba(255, 255, 255, 0.1);
+  --text-light: #ffffff;
+  --text-gray: #cccccc;
+  --border-color: rgba(255, 255, 255, 0.2);
+  --success-color: #00ff88;
+  --warning-color: #ffaa00;
+  --error-color: #ff4444;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: 'SF Pro Display', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #16213e 100%);
+  color: var(--text-light);
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+}
+
+#app {
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Canvas for WebXR rendering */
+canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+}
+
+/* UI Overlay */
+#ui-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  z-index: 10;
+  background: var(--background-dark);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  padding: 2rem;
+  text-align: center;
+}
+
+/* Typography */
+h1 {
+  font-size: clamp(2rem, 5vw, 3rem);
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+  background: linear-gradient(45deg, var(--primary-color), var(--secondary-color));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: 0 0 30px rgba(0, 255, 136, 0.3);
+}
+
+p {
+  font-size: 1.1rem;
+  color: var(--text-gray);
+  margin-bottom: 2rem;
+  font-weight: 300;
+}
+
+/* Button Styles */
+#start-ar {
+  background: linear-gradient(45deg, var(--primary-color), var(--secondary-color));
+  border: none;
+  padding: 1rem 2rem;
+  border-radius: 50px;
+  color: white;
+  font-size: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 
+    0 4px 15px rgba(0, 255, 136, 0.3),
+    0 0 0 1px rgba(255, 255, 255, 0.1);
+  margin-bottom: 1.5rem;
+  min-width: 200px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+#start-ar:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 
+    0 8px 25px rgba(0, 255, 136, 0.4),
+    0 0 0 1px rgba(255, 255, 255, 0.2);
+}
+
+#start-ar:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+#start-ar:disabled {
+  background: var(--background-light);
+  color: var(--text-gray);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* Status Display */
+#status {
+  font-size: 1rem;
+  color: var(--text-gray);
+  padding: 1rem;
+  border-radius: 12px;
+  background: var(--background-light);
+  border: 1px solid var(--border-color);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  max-width: 400px;
+  line-height: 1.4;
+  font-weight: 400;
+}
+
+/* Success, Warning, Error states */
+#status.success {
+  color: var(--success-color);
+  border-color: var(--success-color);
+  background: rgba(0, 255, 136, 0.1);
+}
+
+#status.warning {
+  color: var(--warning-color);
+  border-color: var(--warning-color);
+  background: rgba(255, 170, 0, 0.1);
+}
+
+#status.error {
+  color: var(--error-color);
+  border-color: var(--error-color);
+  background: rgba(255, 68, 68, 0.1);
+}
+
+/* Loading Animation */
+.loading {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border-color);
+  border-radius: 50%;
+  border-top-color: var(--primary-color);
+  animation: spin 1s ease-in-out infinite;
+  margin-right: 8px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Mobile Responsiveness */
+@media (max-width: 768px) {
+  #ui-overlay {
+    padding: 1rem;
+  }
+  
+  h1 {
+    font-size: 2rem;
+  }
+  
+  p {
+    font-size: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  
+  #start-ar {
+    padding: 0.8rem 1.5rem;
+    font-size: 1rem;
+    min-width: 180px;
+  }
+  
+  #status {
+    font-size: 0.9rem;
+    max-width: 300px;
+  }
+}
+
+/* Meta Quest 3 Optimizations */
+@media (max-width: 480px) {
+  h1 {
+    font-size: 1.8rem;
+  }
+  
+  #start-ar {
+    padding: 0.7rem 1.2rem;
+    font-size: 0.9rem;
+    min-width: 160px;
+  }
+}
+
+/* High DPI displays */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+  #start-ar {
+    box-shadow: 
+      0 2px 8px rgba(0, 255, 136, 0.3),
+      0 0 0 0.5px rgba(255, 255, 255, 0.1);
+  }
+}
+
+/* Accessibility */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Focus states for keyboard navigation */
+#start-ar:focus {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+/* Print styles (hide AR interface) */
+@media print {
+  #ui-overlay, canvas {
+    display: none !important;
+  }
+}
