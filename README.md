@@ -13,6 +13,25 @@ A production-ready vanilla JavaScript WebXR application featuring advanced plane
 
 See [Quick Start](#-quick-start) for detailed setup instructions.
 
+## 📸 **Visual Showcase**
+
+Experience the complete WebXR workflow from browser to immersive AR placement:
+
+### **1. Browser Interface**
+<img src="docs/images/browser-start-screen.jpeg" alt="WebXR Start Screen in Browser" width="600">
+
+*Clean, modern interface with prominent "Start AR Experience" button and WebXR status indicators.*
+
+### **2. Interactive Placement**
+<img src="docs/images/cube-placement-interaction.jpeg" alt="Cube Placement with Visual Cursor" width="600">
+
+*Real-time cursor system showing exact placement location with surface highlighting and visual feedback.*
+
+### **3. Positioned Object**
+<img src="docs/images/cube-placed-result.jpeg" alt="Successfully Placed Cube in AR Environment" width="600">
+
+*Cube successfully placed on detected surface with repositioning hint for enhanced user experience.*
+
 ## 🚀 **Live Features**
 
 - **🎯 Precision Hit-Testing**: WebXR hit-test API with fallback to plane detection

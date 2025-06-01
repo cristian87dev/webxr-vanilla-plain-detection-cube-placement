@@ -179,6 +179,9 @@ coverage/
 # Documentation build
 docs/build/
 
+# ✅ Keep documentation images for README showcase
+# docs/images/ - TRACKED for README visual examples
+
 # Lock files (uncomment if you want to ignore them)
 # package-lock.json
 # yarn.lock
