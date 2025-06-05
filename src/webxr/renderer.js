@@ -79,18 +79,23 @@ export class WebXRRenderer {
       document.body.appendChild(this.canvas)
     }
 
-    // Get WebGL context with XR compatibility
-    this.gl = this.canvas.getContext('webgl2', { 
+    // ✅ PERFORMANCE: Optimized WebGL context for Quest 3
+    const contextAttributes = {
       xrCompatible: true,
       alpha: true,
-      antialias: true,
-      preserveDrawingBuffer: false
-    }) || this.canvas.getContext('webgl', { 
-      xrCompatible: true,
-      alpha: true,
-      antialias: true,
-      preserveDrawingBuffer: false
-    })
+      antialias: false, // Disable for performance
+      preserveDrawingBuffer: false, // Better memory usage
+      powerPreference: "high-performance", // Use discrete GPU if available
+      failIfMajorPerformanceCaveat: false, // Don't fail on performance warnings
+      depth: true,
+      stencil: false, // Disable stencil buffer if not needed
+      premultipliedAlpha: false,
+      desynchronized: true // Enable low-latency rendering
+    }
+
+    // Get WebGL context with XR compatibility - prefer WebGL2 for better performance
+    this.gl = this.canvas.getContext('webgl2', contextAttributes) || 
+              this.canvas.getContext('webgl', contextAttributes)
 
     if (!this.gl) {
       throw new Error('Unable to create WebGL context')
@@ -98,7 +103,7 @@ export class WebXRRenderer {
 
     // Make context XR compatible
     await this.gl.makeXRCompatible()
-    console.log('✅ WebGL context created and made XR compatible')
+    console.log('✅ WebGL context created with Quest 3 performance optimizations and made XR compatible')
   }
 
   /**
@@ -110,24 +115,28 @@ export class WebXRRenderer {
       canvas: this.canvas,
       context: this.gl,
       alpha: true,
-      antialias: true,
+      antialias: false,
       preserveDrawingBuffer: false
     })
 
-    // Configure renderer for XR
     this.renderer.autoClear = false
-    this.renderer.shadowMap.enabled = true
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    this.renderer.shadowMap.enabled = false
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.xr.enabled = true
+    
+    this.renderer.setPixelRatio(1)
+    this.renderer.sortObjects = false
+    this.renderer.powerPreference = "high-performance"
+    
+    this.renderer.autoClearColor = false
+    this.renderer.autoClearDepth = false
+    this.renderer.autoClearStencil = false
 
-    // Create scene
     this.scene = new THREE.Scene()
 
-    // Create camera (will be managed by WebXR)
     this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 1000)
 
-    console.log('✅ Three.js scene, renderer, and camera created')
+    console.log('✅ Three.js scene, renderer, and camera created with Quest 3 optimizations')
   }
 
   /**

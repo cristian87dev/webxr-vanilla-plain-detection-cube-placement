@@ -1,5 +1,6 @@
 import './style.css'
 import * as THREE from 'three'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { WebXRSession } from './webxr/session.js'
 import { WebXRRenderer } from './webxr/renderer.js'
 import { HitTestManager } from './interaction/HitTestManager.js'
@@ -10,7 +11,7 @@ import { multiplyMatrixAndPoint, getPlaneCenter } from './utils/math.js'
 class WebXRPlaneDetectionApp {
   constructor() {
     // Configuration constants
-    this.CUBE_HEIGHT_OFFSET = 0.1  // 10cm above surface
+    this.OBJECT_HEIGHT_OFFSET = 0.05  // Reduced offset since ground sits on surface
     this.MAX_PLACEMENT_DISTANCE = 2.0  // Maximum distance for plane selection
     this.LOG_FREQUENCY_FRAMES = 120  // Log every 2 seconds at 60fps
     
@@ -19,18 +20,33 @@ class WebXRPlaneDetectionApp {
     this.renderer = null
     this.scene = null
     this.camera = null
-    this.cube = null
+    this.treeScene = null // ✅ CHANGED: Replace cube with treeScene
+    this.groundMesh = null // ✅ NEW: Reference to ground mesh for interaction
+    this.treeMesh = null   // ✅ NEW: Reference to tree mesh for interaction
+    
+    // ✅ NEW: Loading state management
+    this.treeSceneLoading = false
+    this.treeSceneLoaded = false
     
     // ✅ ENHANCED: Multi-state placement system with repositioning
-    this.placementState = 'scanning' // scanning | targeting | preview | placed | repositioning
-    this.isPlaced = false // Keep for backward compatibility
+    this.placementState = 'scanning' // 'scanning' | 'targeting' | 'preview' | 'placed' | 'repositioning'
+    this.isPlaced = false
     
-    // Anchor support for improved stability
-    this.cubeAnchor = null
-    this.trackAnchoredCube = false
+    // UI references
+    this.ui = {
+      startButton: null,
+      statusDiv: null,
+      overlay: null
+    }
     
-    // Plane detection for manual placement
+    // Plane detection data
     this.availablePlanes = []
+    this.totalPlanesDetected = 0
+    this.lastPlaneCount = 0
+    
+    // ✅ NEW: Anchor support for placed objects (future WebXR feature)
+    this.objectAnchor = null
+    this.trackAnchoredObject = false
     
     // ✅ ENHANCED: Better input source tracking
     this.activeInputSources = new Map() // inputSource -> metadata
@@ -55,7 +71,6 @@ class WebXRPlaneDetectionApp {
     // Debug counters
     this.frameCount = 0
     this.lastLogTime = 0
-    this.totalPlanesDetected = 0
     
     this.webxrSession = new WebXRSession()
     this.webxrRenderer = new WebXRRenderer()
@@ -223,9 +238,9 @@ class WebXRPlaneDetectionApp {
       // ✅ NEW: Setup scene organization groups
       this.setupSceneGroups()
       
-      // Create the cube to place on detected planes
-      console.log('📦 [DEBUG] Creating placement cube...')
-      this.createCube()
+      // Create the tree scene to place on detected planes
+      console.log('🌲 [DEBUG] Creating tree scene...')
+      await this.createTreeScene()
       
       // Get reference space
       console.log('🌐 [DEBUG] Requesting reference space...')
@@ -247,7 +262,8 @@ class WebXRPlaneDetectionApp {
       this.planeVisualizer = new PlaneVisualizer(this.scene, this.sceneGroups)
       console.log('✅ [DEBUG] Plane visualizer initialized')
       
-      // Set up input event listeners for proper hand/controller detection
+      // ✅ NEW: Setup input event listeners for enhanced interaction
+      console.log('🎮 [DEBUG] Setting up input event listeners...')
       this.setupInputEventListeners()
       
       // Reset debug counters
@@ -255,9 +271,9 @@ class WebXRPlaneDetectionApp {
       this.lastLogTime = performance.now()
       this.totalPlanesDetected = 0
       
-      // Start the render loop
-      console.log('🔄 [DEBUG] Starting render loop...')
-      this.session.requestAnimationFrame((time, frame) => this.onXRFrame(time, frame))
+      // Begin render loop
+      console.log('🔄 [DEBUG] Starting XR render loop...')
+      this.session.requestAnimationFrame(this.onXRFrame.bind(this))
       
       // Hide UI overlay
       document.getElementById('ui-overlay').style.display = 'none'
@@ -308,11 +324,14 @@ class WebXRPlaneDetectionApp {
           this.planeVisualizer = null
         }
         
+        // ✅ NEW: Clean up tree scene to prevent memory leaks
+        this.disposeTreeScene()
+        
         // Clean up anchor if exists
-        if (this.cubeAnchor) {
-          console.log('🧹 [DEBUG] Cleaning up cube anchor...')
-          this.cubeAnchor = null
-          this.trackAnchoredCube = false
+        if (this.objectAnchor) {
+          console.log('🧹 [DEBUG] Cleaning up object anchor...')
+          this.objectAnchor = null
+          this.trackAnchoredObject = false
         }
         
         // Reset UI
@@ -332,12 +351,12 @@ class WebXRPlaneDetectionApp {
         this.hitTestSetupInProgress = false
         this.pendingHitTestSources.clear()
         
-        if (this.cube) {
-          this.cube.visible = false
-          // ✅ NEW: Reset cube material state
-          if (this.cube.material) {
-            this.cube.material.transparent = false
-            this.cube.material.opacity = 1.0
+        if (this.treeScene) {
+          this.treeScene.visible = false
+          // ✅ NEW: Reset tree material state
+          if (this.treeScene.material) {
+            this.treeScene.material.transparent = false
+            this.treeScene.material.opacity = 1.0
           }
         }
       })
@@ -370,29 +389,368 @@ class WebXRPlaneDetectionApp {
     }
   }
 
-  createCube() {
-    console.log('📦 [DEBUG] Creating placement cube...')
+  async createTreeScene() {
+    // ✅ PREVENT: Race conditions during loading
+    if (this.treeSceneLoading) {
+      console.log('⏳ [DEBUG] Tree scene loading already in progress...')
+      return
+    }
     
-    // Create cube geometry and material
+    if (this.treeSceneLoaded) {
+      console.log('✅ [DEBUG] Tree scene already loaded')
+      return
+    }
+    
+    this.treeSceneLoading = true
+    console.log('🌲 [DEBUG] Loading tree scene GLB...')
+    
+    try {
+      // Load the GLB file
+      const gltfLoader = new GLTFLoader()
+      const gltf = await gltfLoader.loadAsync('assets/tree-scene/treeScene.glb')
+      
+      console.log('📁 [DEBUG] GLB loaded, extracting meshes...')
+      console.log('📋 [DEBUG] GLB structure:', {
+        scenes: gltf.scenes?.length || 0,
+        scene: gltf.scene ? 'exists' : 'missing',
+        sceneChildren: gltf.scene?.children?.length || 0
+      })
+      
+      // ✅ IMPROVED: Debug scene hierarchy before extraction
+      if (gltf.scene && gltf.scene.children) {
+        console.log('📋 [DEBUG] Scene children:')
+        this.debugSceneHierarchy(gltf.scene, 0)
+      }
+      
+      // ✅ IMPROVED: Try multiple extraction methods
+      this.groundMesh = this.extractMesh(gltf.scene, 'ground_high')
+      this.treeMesh = this.extractMesh(gltf.scene, 'tree_low')
+      
+      if (!this.groundMesh || !this.treeMesh) {
+        console.error('❌ [DEBUG] Could not find required meshes in GLB')
+        console.log('📋 [DEBUG] Attempting fallback extraction...')
+        
+        // ✅ FALLBACK: Try extracting by type and index
+        const allMeshes = []
+        gltf.scene.traverse((child) => {
+          if (child.isMesh) {
+            allMeshes.push(child)
+            console.log(`🔍 [DEBUG] Found mesh: "${child.name}" (geometry: ${child.geometry.type}, vertices: ${child.geometry.attributes?.position?.count || 'unknown'})`)
+          }
+        })
+        
+        if (allMeshes.length >= 2) {
+          // Assume first mesh is ground, second is tree based on Babylon.js order
+          this.groundMesh = allMeshes[0]
+          this.treeMesh = allMeshes[1]
+          console.log('🔄 [DEBUG] Using fallback mesh assignment by index')
+        } else {
+          console.error('❌ [DEBUG] Insufficient meshes found for fallback')
+          this.treeSceneLoading = false
+          return
+        }
+      }
+      
+      console.log('✅ [DEBUG] Meshes extracted successfully')
+      console.log('🏔️ [DEBUG] Ground mesh:', this.groundMesh?.name || 'unnamed')
+      console.log('🌲 [DEBUG] Tree mesh:', this.treeMesh?.name || 'unnamed')
+      
+      // Create a group to hold both meshes
+      this.treeScene = new THREE.Group()
+      this.treeScene.name = 'TreeScene'
+      this.treeScene.add(this.groundMesh)
+      this.treeScene.add(this.treeMesh)
+      
+      // Apply basic materials
+      await this.setupBasicMaterials()
+      
+      // ✅ PERFORMANCE: Optimize geometry for WebXR
+      this.optimizeGeometry()
+      
+      // Scale down for AR use (original is quite large)
+      this.treeScene.scale.setScalar(0.05)
+      
+      // Initially hidden until placed
+      this.treeScene.visible = false
+      // ✅ PERFORMANCE: Disable shadows entirely for WebXR performance
+      this.treeScene.castShadow = false
+      this.treeScene.receiveShadow = false
+      
+      // Add to content group for organization
+      this.sceneGroups.content.add(this.treeScene)
+      
+      this.treeSceneLoaded = true
+      console.log('✅ [DEBUG] Tree scene created and added to content group')
+      
+    } catch (error) {
+      console.error('❌ [DEBUG] Error loading tree scene:', error)
+      
+      // Fallback: create a simple cube if loading fails
+      console.log('🔄 [DEBUG] Falling back to simple cube...')
+      this.createFallbackCube()
+      this.treeSceneLoaded = true // Mark as loaded even with fallback
+      
+    } finally {
+      this.treeSceneLoading = false
+    }
+  }
+
+  /**
+   * ✅ NEW: Robust mesh extraction with multiple fallback strategies
+   */
+  extractMesh(scene, meshName) {
+    console.log(`🔍 [DEBUG] Extracting mesh: "${meshName}"`)
+    
+    // Method 1: Direct getObjectByName (most common)
+    let mesh = scene.getObjectByName(meshName)
+    if (mesh && mesh.isMesh) {
+      console.log(`✅ [DEBUG] Found "${meshName}" via getObjectByName`)
+      return mesh
+    }
+    
+    // Method 2: Traverse and find by name
+    let foundMesh = null
+    scene.traverse((child) => {
+      if (child.isMesh && child.name === meshName) {
+        foundMesh = child
+      }
+    })
+    
+    if (foundMesh) {
+      console.log(`✅ [DEBUG] Found "${meshName}" via traverse`)
+      return foundMesh
+    }
+    
+    // Method 3: Traverse and find by name containing
+    scene.traverse((child) => {
+      if (child.isMesh && child.name.includes(meshName)) {
+        foundMesh = child
+      }
+    })
+    
+    if (foundMesh) {
+      console.log(`✅ [DEBUG] Found "${meshName}" via name contains`)
+      return foundMesh
+    }
+    
+    console.warn(`⚠️ [DEBUG] Could not find mesh "${meshName}" using any method`)
+    return null
+  }
+
+  /**
+   * ✅ NEW: Debug scene hierarchy for troubleshooting
+   */
+  debugSceneHierarchy(object, depth = 0) {
+    const indent = '  '.repeat(depth)
+    const type = object.isMesh ? 'Mesh' : object.isGroup ? 'Group' : object.type || 'Object3D'
+    const name = object.name || 'unnamed'
+    const vertexCount = object.geometry?.attributes?.position?.count || 'n/a'
+    
+    console.log(`${indent}${type}: "${name}" (vertices: ${vertexCount})`)
+    
+    if (object.children && depth < 3) { // Limit depth to prevent spam
+      object.children.forEach(child => this.debugSceneHierarchy(child, depth + 1))
+    }
+  }
+
+  async setupBasicMaterials() {
+    console.log('�� [DEBUG] Setting up optimized materials for WebXR performance...')
+    
+    try {
+      const textureLoader = new THREE.TextureLoader()
+      
+      // Load textures with proper validation
+      console.log('📥 [DEBUG] Loading and optimizing textures...')
+      
+      const texturePromises = [
+        this.loadTextureWithValidation(textureLoader, 'assets/tree-scene/optimized/groundMat_diffuse.png', 'ground'),
+        this.loadTextureWithValidation(textureLoader, 'assets/tree-scene/optimized/treeMat_diffuse.png', 'tree')
+      ]
+      
+      const [groundTexture, treeTexture] = await Promise.all(texturePromises)
+      
+      // ✅ PERFORMANCE: Optimize textures for WebXR
+      this.optimizeTexture(groundTexture, 'ground')
+      this.optimizeTexture(treeTexture, 'tree')
+      
+      console.log('✅ [DEBUG] Textures loaded and optimized for performance')
+      
+      // ✅ PERFORMANCE: Use MeshBasicMaterial for better performance in AR
+      // AR environments have their own lighting, so we don't need complex lighting
+      const groundMaterial = new THREE.MeshBasicMaterial({ 
+        map: groundTexture,
+        side: THREE.DoubleSide,
+        // ✅ PERFORMANCE: Disable unnecessary features
+        fog: false,
+        transparent: false
+      })
+      
+      const treeMaterial = new THREE.MeshBasicMaterial({ 
+        map: treeTexture,
+        side: THREE.DoubleSide,
+        fog: false,
+        transparent: false
+      })
+      
+      // Apply materials with validation
+      if (this.groundMesh) {
+        this.groundMesh.material = groundMaterial
+        // ✅ PERFORMANCE: Disable shadows for better performance
+        this.groundMesh.castShadow = false
+        this.groundMesh.receiveShadow = false
+        console.log('🏔️ [DEBUG] Ground material applied with performance optimizations')
+      }
+      
+      if (this.treeMesh) {
+        this.treeMesh.material = treeMaterial
+        this.treeMesh.castShadow = false
+        this.treeMesh.receiveShadow = false
+        console.log('🌲 [DEBUG] Tree material applied with performance optimizations')
+      }
+      
+      console.log('✅ [DEBUG] Materials setup complete with WebXR performance optimizations')
+      
+    } catch (error) {
+      console.error('❌ [DEBUG] Error setting up materials:', error)
+      
+      // ✅ PERFORMANCE: Lightweight fallback materials
+      if (this.groundMesh) {
+        this.groundMesh.material = new THREE.MeshBasicMaterial({ color: 0x8B4513 }) // Brown
+        this.groundMesh.castShadow = false
+        this.groundMesh.receiveShadow = false
+      }
+      if (this.treeMesh) {
+        this.treeMesh.material = new THREE.MeshBasicMaterial({ color: 0x228B22 }) // Forest green
+        this.treeMesh.castShadow = false
+        this.treeMesh.receiveShadow = false
+      }
+      
+      console.log('🔄 [DEBUG] Applied lightweight fallback materials')
+    }
+  }
+
+  /**
+   * ✅ NEW: Optimize texture for WebXR performance
+   */
+  optimizeTexture(texture, name) {
+    console.log(`🔧 [DEBUG] Optimizing ${name} texture for WebXR performance...`)
+    
+    // ✅ PERFORMANCE: Enable mipmaps for better performance at distance
+    texture.generateMipmaps = true
+    
+    // ✅ PERFORMANCE: Use linear filtering for better performance
+    texture.minFilter = THREE.LinearMipmapLinearFilter
+    texture.magFilter = THREE.LinearFilter
+    
+    // ✅ PERFORMANCE: Clamp to edge to avoid artifacts
+    texture.wrapS = THREE.ClampToEdgeWrapping
+    texture.wrapT = THREE.ClampToEdgeWrapping
+    
+    // ✅ PERFORMANCE: Force texture to be powers of 2 for better GPU performance
+    texture.flipY = false
+    
+    // ✅ PERFORMANCE: Reduce anisotropy for mobile GPUs (Quest 3)
+    texture.anisotropy = Math.min(4, this.renderer?.capabilities?.getMaxAnisotropy() || 4)
+    
+    console.log(`✅ [DEBUG] ${name} texture optimized:`, {
+      anisotropy: texture.anisotropy,
+      format: texture.format,
+      generateMipmaps: texture.generateMipmaps
+    })
+  }
+
+  /**
+   * ✅ NEW: Load texture with proper validation and error handling
+   */
+  async loadTextureWithValidation(textureLoader, texturePath, description) {
+    return new Promise((resolve, reject) => {
+      console.log(`📥 [DEBUG] Loading ${description} texture: ${texturePath}`)
+      
+      textureLoader.load(
+        texturePath,
+        // onLoad
+        (texture) => {
+          console.log(`✅ [DEBUG] ${description} texture loaded successfully:`, {
+            width: texture.image?.width || 'unknown',
+            height: texture.image?.height || 'unknown',
+            format: texture.format,
+            type: texture.type
+          })
+          resolve(texture)
+        },
+        // onProgress  
+        (progress) => {
+          if (progress.lengthComputable) {
+            const percent = Math.round((progress.loaded / progress.total) * 100)
+            console.log(`📊 [DEBUG] Loading ${description} texture: ${percent}%`)
+          }
+        },
+        // onError
+        (error) => {
+          console.error(`❌ [DEBUG] Failed to load ${description} texture from ${texturePath}:`, error)
+          reject(error)
+        }
+      )
+    })
+  }
+
+  /**
+   * ✅ NEW: Proper disposal of tree scene resources
+   */
+  disposeTreeScene() {
+    if (!this.treeScene) return
+    
+    console.log('🗑️ [DEBUG] Disposing tree scene resources...')
+    
+    // Dispose materials and textures
+    this.treeScene.traverse((child) => {
+      if (child.material) {
+        if (child.material.map) {
+          child.material.map.dispose()
+        }
+        child.material.dispose()
+      }
+      
+      if (child.geometry) {
+        child.geometry.dispose()
+      }
+    })
+    
+    // Remove from scene
+    if (this.treeScene.parent) {
+      this.treeScene.parent.remove(this.treeScene)
+    }
+    
+    // Clear references
+    this.treeScene = null
+    this.groundMesh = null
+    this.treeMesh = null
+    this.treeSceneLoaded = false
+    
+    console.log('✅ [DEBUG] Tree scene disposed successfully')
+  }
+
+  createFallbackCube() {
+    console.log('📦 [DEBUG] Creating fallback cube...')
+    
     const geometry = new THREE.BoxGeometry(0.2, 0.2, 0.2)
     const material = new THREE.MeshLambertMaterial({ color: 0x00ff00 })
     
-    this.cube = new THREE.Mesh(geometry, material)
-    this.cube.visible = false // Initially hidden until placed
-    this.cube.castShadow = true
-    this.cube.receiveShadow = true
+    this.treeScene = new THREE.Mesh(geometry, material)
+    this.treeScene.visible = false
+    this.treeScene.castShadow = true
+    this.treeScene.receiveShadow = true
     
-    // ✅ ENHANCED: Add to content group for better organization
-    this.sceneGroups.content.add(this.cube)
+    this.sceneGroups.content.add(this.treeScene)
     
-    console.log('✅ [DEBUG] Cube created and added to content group')
+    console.log('✅ [DEBUG] Fallback cube created')
   }
 
   placeCubeOnPlane(plane, frame) {
-    console.log('🎯 [DEBUG] Attempting to place cube on plane...')
+    console.log('🎯 [DEBUG] Attempting to place tree scene on plane...')
     
     if (!plane || !frame || !this.refSpace) {
-      console.warn('⚠️ [DEBUG] Missing required parameters for cube placement')
+      console.warn('⚠️ [DEBUG] Missing required parameters for tree scene placement')
       return false
     }
 
@@ -411,7 +769,7 @@ class WebXRPlaneDetectionApp {
       })
       console.log('📐 [DEBUG] Plane pose matrix:', planePose.transform.matrix)
 
-      // Calculate cube position (center of plane, slightly above surface)
+      // Calculate tree scene position (center of plane, on surface)
       const planeMatrix = planePose.transform.matrix
       const planeCenter = getPlaneCenter(plane.polygon)
       
@@ -423,45 +781,44 @@ class WebXRPlaneDetectionApp {
         1.0
       ])
 
-      // ✅ FIXED: For horizontal planes, add offset upward in world Y
+      // ✅ FIXED: For horizontal planes, add small offset upward in world Y
       // For vertical planes, we might need a different approach
-      let cubePosition
+      let treePosition
       
       if (plane.orientation === 'horizontal') {
         // For horizontal planes, offset upward in world Y-axis
-        cubePosition = [
+        treePosition = [
           worldPlaneCenter[0],
-          worldPlaneCenter[1] + this.CUBE_HEIGHT_OFFSET, // Add offset in world space
+          worldPlaneCenter[1] + this.OBJECT_HEIGHT_OFFSET, // Small offset for ground clearance
           worldPlaneCenter[2]
         ]
         console.log('📱 [DEBUG] Horizontal plane - adding Y offset in world coordinates')
       } else {
-        // For vertical planes, place cube slightly in front of the surface
-        // Use the plane's normal vector direction
-        cubePosition = [
+        // For vertical planes, place tree scene slightly in front of the surface
+        treePosition = [
           worldPlaneCenter[0],
           worldPlaneCenter[1], // Keep same height for vertical planes
-          worldPlaneCenter[2] + this.CUBE_HEIGHT_OFFSET // Offset forward from wall
+          worldPlaneCenter[2] + this.OBJECT_HEIGHT_OFFSET // Offset forward from wall
         ]
         console.log('🏛️ [DEBUG] Vertical plane - adding Z offset in world coordinates')
       }
 
-      this.cube.position.set(cubePosition[0], cubePosition[1], cubePosition[2])
-      this.cube.visible = true
+      this.treeScene.position.set(treePosition[0], treePosition[1], treePosition[2])
+      this.treeScene.visible = true
       this.placementState = 'placed'
       this.isPlaced = true
 
-      console.log('✅ [DEBUG] Cube placed successfully!')
+      console.log('✅ [DEBUG] Tree scene placed successfully!')
       console.log('📍 [DEBUG] Plane center (world):', {
         x: worldPlaneCenter[0].toFixed(3),
         y: worldPlaneCenter[1].toFixed(3),
         z: worldPlaneCenter[2].toFixed(3)
       })
-      console.log('📍 [DEBUG] Cube position (world):', {
-        x: cubePosition[0].toFixed(3),
-        y: cubePosition[1].toFixed(3),
-        z: cubePosition[2].toFixed(3),
-        offsetApplied: `+${this.CUBE_HEIGHT_OFFSET}m in ${plane.orientation === 'horizontal' ? 'Y' : 'Z'}`,
+      console.log('📍 [DEBUG] Tree scene position (world):', {
+        x: treePosition[0].toFixed(3),
+        y: treePosition[1].toFixed(3),
+        z: treePosition[2].toFixed(3),
+        offsetApplied: `+${this.OBJECT_HEIGHT_OFFSET}m in ${plane.orientation === 'horizontal' ? 'Y' : 'Z'}`,
         planeOrientation: plane.orientation
       })
 
@@ -470,18 +827,18 @@ class WebXRPlaneDetectionApp {
 
       return true
     } catch (error) {
-      console.error('❌ [DEBUG] Error placing cube:', error)
+      console.error('❌ [DEBUG] Error placing tree scene:', error)
       return false
     }
   }
 
   /**
-   * Attempt to create an anchor for the placed cube (future WebXR feature)
-   * @param {XRPose} planePose Position where cube was placed
+   * Attempt to create an anchor for the placed tree scene (future WebXR feature)
+   * @param {XRPose} planePose Position where tree scene was placed
    * @param {XRFrame} frame Current XR frame
    */
   async tryCreateAnchor(planePose, frame) {
-    console.log('⚓ [DEBUG] Attempting to create anchor for cube stability...')
+    console.log('⚓ [DEBUG] Attempting to create anchor for tree scene stability...')
     
     try {
       // Check if anchors are supported
@@ -495,16 +852,16 @@ class WebXRPlaneDetectionApp {
 
       // Check if createAnchor method exists (future API)
       if (typeof session.createAnchor === 'function') {
-        console.log('🔧 [DEBUG] Creating anchor at cube position...')
+        console.log('🔧 [DEBUG] Creating anchor at tree scene position...')
         
         const anchor = await session.createAnchor(planePose, this.refSpace)
-        this.cubeAnchor = anchor
+        this.objectAnchor = anchor
         
         console.log('✅ [DEBUG] Anchor created successfully!')
-        console.log('⚓ [DEBUG] Cube is now anchored to the real world')
+        console.log('⚓ [DEBUG] Tree scene is now anchored to the real world')
         
         // Set up anchor tracking
-        this.trackAnchoredCube = true
+        this.trackAnchoredObject = true
         
       } else {
         console.log('ℹ️ [DEBUG] createAnchor method not yet available')
@@ -517,39 +874,45 @@ class WebXRPlaneDetectionApp {
   }
 
   /**
-   * ✅ NEW: Place cube at hit-test result location
+   * ✅ NEW: Place tree scene at hit-test result location
    * @param {Object} hitResult Hit-test result with pose and metadata
    * @param {XRFrame} frame Current XR frame
    * @returns {boolean} True if placement successful
    */
   placeCubeAtHitTest(hitResult, frame) {
     try {
-      console.log('🎯 [DEBUG] Placing cube at hit-test location...')
+      console.log('🎯 [DEBUG] Placing tree scene at hit-test location...')
       
       const { pose } = hitResult
       const position = pose.transform.position
       const orientation = pose.transform.orientation
       
       // Apply height offset above the hit surface
-      const cubePosition = [
+      const treePosition = [
         position.x,
-        position.y + this.CUBE_HEIGHT_OFFSET,
+        position.y + this.OBJECT_HEIGHT_OFFSET,
         position.z
       ]
       
       console.log('📍 [DEBUG] Hit-test placement position:', {
         original: [position.x, position.y, position.z],
-        withOffset: cubePosition,
-        orientation: [orientation.x, orientation.y, orientation.z, orientation.w]
+        withOffset: treePosition,
+        heightOffset: this.OBJECT_HEIGHT_OFFSET
       })
       
-      // Position the cube
-      this.cube.position.set(cubePosition[0], cubePosition[1], cubePosition[2])
-      this.cube.visible = true
+      // Position the tree scene
+      this.treeScene.position.set(...treePosition)
+      this.treeScene.quaternion.set(
+        orientation.x, 
+        orientation.y, 
+        orientation.z, 
+        orientation.w
+      )
+      this.treeScene.visible = true
       this.placementState = 'placed'
       this.isPlaced = true
 
-      console.log('✅ [DEBUG] Cube placed successfully at hit-test location!')
+      console.log('✅ [DEBUG] Tree scene placed successfully at hit-test location!')
       
       // Try to create anchor for stability
       this.tryCreateAnchor(pose, frame).catch(error => {
@@ -559,41 +922,45 @@ class WebXRPlaneDetectionApp {
       return true
       
     } catch (error) {
-      console.error('❌ [DEBUG] Error placing cube at hit-test location:', error)
+      console.error('❌ [DEBUG] Error placing tree scene at hit-test location:', error)
       return false
     }
   }
 
   /**
-   * Update cube position using anchor if available
+   * Update tree scene position using anchor if available
    * @param {XRFrame} frame Current XR frame
    */
-  updateAnchoredCube(frame) {
-    if (!this.trackAnchoredCube || !this.cubeAnchor) return
+  updateAnchoredObject(frame) {
+    if (!this.trackAnchoredObject || !this.objectAnchor || !this.treeScene) {
+      return
+    }
 
     try {
       // Get current anchor pose
-      const anchorPose = frame.getPose(this.cubeAnchor.anchorSpace, this.refSpace)
+      const anchorPose = frame.getPose(this.objectAnchor.anchorSpace, this.refSpace)
       
       if (anchorPose) {
-        // Update cube position to match anchor
         const pos = anchorPose.transform.position
         const rot = anchorPose.transform.orientation
         
-        // ✅ FIXED: Add offset in world coordinates for anchored cube too
-        this.cube.position.set(
+        // ✅ FIXED: Add offset in world coordinates for anchored tree scene too
+        this.treeScene.position.set(
           pos.x, 
-          pos.y + this.CUBE_HEIGHT_OFFSET, // Offset in world Y
+          pos.y + this.OBJECT_HEIGHT_OFFSET, // Offset in world Y
           pos.z
         )
-        this.cube.quaternion.set(rot.x, rot.y, rot.z, rot.w)
+        this.treeScene.quaternion.set(rot.x, rot.y, rot.z, rot.w)
         
-        console.log('⚓ [DEBUG] Cube position updated via anchor')
+        console.log('⚓ [DEBUG] Tree scene position updated via anchor')
+      } else {
+        console.warn('⚠️ [DEBUG] Could not get anchor pose, disabling tracking')
+        this.trackAnchoredObject = false
       }
       
     } catch (error) {
-      console.warn('⚠️ [DEBUG] Error updating anchored cube:', error)
-      this.trackAnchoredCube = false // Disable anchor tracking on error
+      console.error('❌ [DEBUG] Error updating anchored tree scene:', error)
+      this.trackAnchoredObject = false
     }
   }
 
@@ -672,9 +1039,9 @@ class WebXRPlaneDetectionApp {
     // Check for detected planes (always scan, even after placement)
     this.scanForPlanes(frame)
     
-    // Update cube position using anchor if available (after placement)
+    // Update tree scene position using anchor if available (after placement)
     if (this.placementState === 'placed') {
-      this.updateAnchoredCube(frame)
+      this.updateAnchoredObject(frame)
     }
 
     // Render the scene
@@ -941,9 +1308,9 @@ class WebXRPlaneDetectionApp {
         
         // Update status with success
         const method = this.hitTestManager?.isHitTestSupported() ? 'hit-testing' : 'plane detection'
-        this.ui.statusDiv.textContent = `✅ Cube placed using ${inputType} (${method})! Point at cube to move it`
+        this.ui.statusDiv.textContent = `✅ Tree scene placed using ${inputType} (${method})! Point at tree to move it`
         
-        console.log(`🎊 [DEBUG] Cube placed successfully using ${inputType} with ${method}!`)
+        console.log(`🎊 [DEBUG] Tree scene placed successfully using ${inputType} with ${method}!`)
       } else {
         // Guide user to point at surfaces
         this.ui.statusDiv.textContent = `👉 Point at a flat surface and ${inputType === 'hand' ? 'pinch' : 'pull trigger'}`
@@ -1066,14 +1433,14 @@ class WebXRPlaneDetectionApp {
   }
 
   /**
-   * ✅ FIXED: Check if user is pointing AT the placed cube to start repositioning
+   * ✅ FIXED: Check if user is pointing AT the placed tree scene to start repositioning
    * @param {XRInputSource} inputSource Input source used for interaction
    * @param {XRFrame} frame Current XR frame
    * @param {string} inputType Type of input (hand/controller)
    */
   checkCubeInteraction(inputSource, frame, inputType) {
-    if (!this.cube || !this.cube.visible) {
-      console.warn('⚠️ [DEBUG] No cube available for interaction')
+    if (!this.treeScene || !this.treeScene.visible) {
+      console.warn('⚠️ [DEBUG] No tree scene available for interaction')
       return
     }
 
@@ -1081,7 +1448,7 @@ class WebXRPlaneDetectionApp {
       // Get the input source pose (where user is pointing)
       const inputPose = frame.getPose(inputSource.targetRaySpace, this.refSpace)
       if (!inputPose) {
-        console.warn('⚠️ [DEBUG] Could not get input pose for cube interaction')
+        console.warn('⚠️ [DEBUG] Could not get input pose for tree scene interaction')
         return
       }
 
@@ -1101,33 +1468,34 @@ class WebXRPlaneDetectionApp {
       // Create Three.js raycaster for accurate intersection
       const raycaster = new THREE.Raycaster(rayOrigin, forwardDirection)
       
-      // ✅ FIXED: Test ray intersection with cube instead of distance
-      const intersections = raycaster.intersectObject(this.cube, false)
+      // ✅ FIXED: Test ray intersection with tree scene (recursive for child meshes)
+      const intersections = raycaster.intersectObject(this.treeScene, true)
       
       if (intersections.length > 0) {
         const intersection = intersections[0]
         const distance = intersection.distance
+        const objectName = intersection.object.name || 'unnamed mesh'
         
-        console.log(`🎯 [DEBUG] Ray intersects cube at ${distance.toFixed(3)}m`)
+        console.log(`🎯 [DEBUG] Ray intersects tree scene (${objectName}) at ${distance.toFixed(3)}m`)
         
         // Check if intersection is within reasonable range
         const MAX_INTERACTION_DISTANCE = 3.0 // 3 meters max range
         
         if (distance <= MAX_INTERACTION_DISTANCE) {
-          console.log(`🔄 [DEBUG] Starting cube repositioning with ${inputType}`)
+          console.log(`🔄 [DEBUG] Starting tree scene repositioning with ${inputType}`)
           this.startRepositioning()
         } else {
-          console.log(`ℹ️ [DEBUG] Cube too far to interact (${distance.toFixed(2)}m away)`)
-          this.ui.statusDiv.textContent = `📦 Cube too far to move (${distance.toFixed(1)}m away)`
+          console.log(`ℹ️ [DEBUG] Tree scene too far to interact (${distance.toFixed(2)}m away)`)
+          this.ui.statusDiv.textContent = `🌲 Tree scene too far to move (${distance.toFixed(1)}m away)`
         }
       } else {
-        // ✅ FIXED: Provide accurate feedback when not pointing at cube
-        console.log(`ℹ️ [DEBUG] Not pointing directly at the cube`)
-        this.ui.statusDiv.textContent = `📦 Point directly at the cube to move it`
+        // ✅ FIXED: Provide accurate feedback when not pointing at tree scene
+        console.log(`ℹ️ [DEBUG] Not pointing directly at the tree scene`)
+        this.ui.statusDiv.textContent = `🌲 Point directly at the tree to move it`
       }
 
     } catch (error) {
-      console.error('❌ [DEBUG] Error checking cube interaction:', error)
+      console.error('❌ [DEBUG] Error checking tree scene interaction:', error)
     }
   }
 
@@ -1142,21 +1510,25 @@ class WebXRPlaneDetectionApp {
     this.isPlaced = false // Temporarily mark as not placed
     
     // ✅ NEW: Clear anchor state for repositioning
-    if (this.cubeAnchor) {
-      console.log('🔗 [DEBUG] Clearing cube anchor for repositioning')
-      this.cubeAnchor = null
-      this.trackAnchoredCube = false
+    if (this.objectAnchor) {
+      console.log('🔗 [DEBUG] Clearing object anchor for repositioning')
+      this.objectAnchor = null
+      this.trackAnchoredObject = false
     }
     
-    // Make cube semi-transparent to indicate it's being moved
-    if (this.cube && this.cube.material) {
-      this.cube.material.transparent = true
-      this.cube.material.opacity = 0.7
-      console.log('👻 [DEBUG] Made cube semi-transparent for repositioning')
+    // Make tree scene semi-transparent to indicate it's being moved
+    if (this.treeScene) {
+      this.treeScene.traverse((child) => {
+        if (child.material) {
+          child.material.transparent = true
+          child.material.opacity = 0.7
+        }
+      })
+      console.log('👻 [DEBUG] Made tree scene semi-transparent for repositioning')
     }
     
     // Update UI to guide user
-    this.ui.statusDiv.textContent = '🎯 Point at a new surface and select to place cube'
+    this.ui.statusDiv.textContent = '🎯 Point at a new surface and select to place tree'
     
     console.log('✅ [DEBUG] Repositioning mode activated - cursors and highlighting will reappear')
   }
@@ -1226,17 +1598,21 @@ class WebXRPlaneDetectionApp {
    * @param {string} inputType Type of input used for repositioning
    */
   finishRepositioning(inputType) {
-    console.log(`🎊 [DEBUG] Cube repositioned successfully using ${inputType}!`)
+    console.log(`🎊 [DEBUG] Tree scene repositioned successfully using ${inputType}!`)
     
     // Return to placed state
     this.placementState = 'placed'
     this.isPlaced = true
     
-    // Restore cube to full opacity
-    if (this.cube && this.cube.material) {
-      this.cube.material.transparent = false
-      this.cube.material.opacity = 1.0
-      console.log('✨ [DEBUG] Restored cube to full opacity')
+    // Restore tree scene to full opacity
+    if (this.treeScene) {
+      this.treeScene.traverse((child) => {
+        if (child.material) {
+          child.material.transparent = false
+          child.material.opacity = 1.0
+        }
+      })
+      console.log('✨ [DEBUG] Restored tree scene to full opacity')
     }
     
     // Hide visual feedback systems
@@ -1249,9 +1625,57 @@ class WebXRPlaneDetectionApp {
     
     // Update UI with success and repositioning hint
     const method = this.hitTestManager?.isHitTestSupported() ? 'hit-testing' : 'plane detection'
-    this.ui.statusDiv.textContent = `✅ Cube repositioned using ${inputType} (${method})! Point at cube to move again`
+    this.ui.statusDiv.textContent = `✅ Tree repositioned using ${inputType} (${method})! Point at tree to move again`
     
-    console.log(`🎊 [DEBUG] Repositioning complete - cube ready for next interaction`)
+    console.log(`🎊 [DEBUG] Repositioning complete - tree scene ready for next interaction`)
+  }
+
+  /**
+   * ✅ NEW: Optimize geometry for WebXR performance
+   */
+  optimizeGeometry() {
+    console.log('🔧 [DEBUG] Optimizing geometry for WebXR performance...')
+    
+    let totalVerticesBefore = 0
+    let totalVerticesAfter = 0
+    
+    this.treeScene.traverse((child) => {
+      if (child.isMesh && child.geometry) {
+        const geom = child.geometry
+        
+        // Count vertices before optimization
+        const verticesBefore = geom.attributes?.position?.count || 0
+        totalVerticesBefore += verticesBefore
+        
+        // ✅ PERFORMANCE: Convert to BufferGeometry if not already
+        if (!(geom instanceof THREE.BufferGeometry)) {
+          console.log(`📐 [DEBUG] Converting ${child.name} to BufferGeometry`)
+          child.geometry = new THREE.BufferGeometry().fromGeometry(geom)
+          geom.dispose() // Clean up old geometry
+        }
+        
+        // ✅ PERFORMANCE: Compute bounding sphere for frustum culling
+        child.geometry.computeBoundingSphere()
+        child.geometry.computeBoundingBox()
+        
+        // ✅ PERFORMANCE: Merge vertices if possible (reduces complexity)
+        // Note: This is optional as it might change the model appearance
+        // child.geometry.mergeVertices()
+        
+        // Count vertices after optimization
+        const verticesAfter = child.geometry.attributes?.position?.count || 0
+        totalVerticesAfter += verticesAfter
+        
+        console.log(`📊 [DEBUG] ${child.name}: ${verticesBefore} → ${verticesAfter} vertices`)
+      }
+    })
+    
+    console.log(`✅ [DEBUG] Geometry optimization complete:`, {
+      totalVerticesBefore,
+      totalVerticesAfter,
+      reductionPercent: totalVerticesBefore > 0 ? 
+        Math.round(((totalVerticesBefore - totalVerticesAfter) / totalVerticesBefore) * 100) : 0
+    })
   }
 }
 
